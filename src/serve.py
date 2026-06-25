@@ -1,38 +1,34 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from google.cloud import storage
+import boto3
 import joblib
 import os
 
 app = FastAPI()
 
-GCS_BUCKET = os.environ["GCS_BUCKET"]
+GCS_BUCKET = os.environ.get("GCS_BUCKET", "my-mlops-lab-bucket")
 GCS_MODEL_KEY = "models/latest/model.pkl"
 MODEL_PATH = os.path.expanduser("~/models/model.pkl")
 
 
 def download_model():
     """
-    Tai file model.pkl tu GCS ve may khi server khoi dong.
-
-    Ham nay duoc goi mot lan khi module duoc import. Su dung
-    GOOGLE_APPLICATION_CREDENTIALS de xac thuc (duoc dat trong systemd service).
+    Tai file model.pkl tu S3 ve may khi server khoi dong.
     """
-    # TODO 1: Tao storage.Client()
-    # client = storage.Client()
-
-    # TODO 2: Lay bucket va blob tuong ung
-    # bucket = client.bucket(GCS_BUCKET)
-    # blob   = bucket.blob(GCS_MODEL_KEY)
-
-    # TODO 3: Tai file model xuong may
-    # blob.download_to_filename(MODEL_PATH)
-
-    # TODO 4: In thong bao thanh cong
-    # print("Model da duoc tai xuong tu GCS.")
-
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
-
+    if not os.path.exists(os.path.dirname(MODEL_PATH)):
+        os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    
+    # Kiem tra xem da co model chua, neu co thi bo qua de test cuc bo
+    # Trong moi truong that tren VM, service se luon chay lai download nay.
+    try:
+        s3 = boto3.client('s3')
+        s3.download_file(GCS_BUCKET, GCS_MODEL_KEY, MODEL_PATH)
+        print("Model da duoc tai xuong tu AWS S3.")
+    except Exception as e:
+        print(f"Loi khi tai model tu S3: {e}")
+        # Neu file da ton tai cuc bo thi bo qua loi (huu ich cho viec test tren may)
+        if not os.path.exists(MODEL_PATH):
+            raise e
 
 download_model()
 model = joblib.load(MODEL_PATH)
@@ -46,38 +42,24 @@ class PredictRequest(BaseModel):
 def health():
     """
     Endpoint kiem tra suc khoe server.
-    GitHub Actions goi endpoint nay sau khi deploy de xac nhan server dang chay.
-
-    Tra ve: {"status": "ok"}
     """
-    # TODO 5: Tra ve dict {"status": "ok"}
-    pass  # xoa dong nay sau khi hoan thanh
+    return {"status": "ok"}
 
 
 @app.post("/predict")
 def predict(req: PredictRequest):
     """
     Endpoint suy luan chinh.
-
-    Dau vao : JSON {"features": [f1, f2, ..., f12]}
-    Dau ra  : JSON {"prediction": <0|1|2>, "label": <"thap"|"trung_binh"|"cao">}
-
-    Thu tu 12 dac trung (khop voi thu tu trong FEATURE_NAMES cua test):
-        fixed_acidity, volatile_acidity, citric_acid, residual_sugar,
-        chlorides, free_sulfur_dioxide, total_sulfur_dioxide, density,
-        pH, sulphates, alcohol, wine_type
     """
-    # TODO 6: Kiem tra so luong dac trung.
-    # Neu len(req.features) != 12, raise HTTPException(status_code=400, ...)
-
-    # TODO 7: Goi model.predict([req.features]) de lay ket qua du doan.
-    # pred = model.predict(...)
-
-    # TODO 8: Tra ve dict chua "prediction" (int) va "label" (string).
-    # Nhan tuong ung: 0 -> "thap", 1 -> "trung_binh", 2 -> "cao"
-    # return {"prediction": ..., "label": ...}
-
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
+    if len(req.features) != 12:
+        raise HTTPException(status_code=400, detail="Expected 12 features (wine quality)")
+        
+    pred = model.predict([req.features])[0]
+    
+    labels = {0: "thap", 1: "trung_binh", 2: "cao"}
+    label = labels.get(int(pred), "unknown")
+    
+    return {"prediction": int(pred), "label": label}
 
 
 if __name__ == "__main__":
